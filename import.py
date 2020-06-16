@@ -1,15 +1,15 @@
 import argparse
-import re
-from datetime import date
 
+from pathlib import Path
+from shutil import copyfile
 from beancount import loader
-from beancount.core import data
-from beancount.parser import parser, printer
+from beancount.parser import printer
 
 from modules.imports.alipay import Alipay
 from modules.imports.citic_credit import CITICCredit
 from modules.imports.cmb_credit import CMBCredit
 from modules.imports.cmbc_credit import CMBCCredit
+from modules.imports.exc import NotSuitableImporterException
 from modules.imports.icbc_debit import ICBCDebit
 from modules.imports.wechat import WeChat
 from modules.imports.yuebao import YuEBao
@@ -32,17 +32,24 @@ for importer in importers:
             file_bytes = f.read()
             instance = importer(args.path, file_bytes, entries, option_map)
         break
-    except Exception as e:
+    except NotSuitableImporterException:
         pass
+    except Exception as e:
+        print(e)
 
-if instance == None:
+if instance is None:
     print("No suitable importer!")
     exit(1)
 
 new_entries = instance.parse()
 
+mode = 'w'
+main_filepath = args.entry
+if main_filepath is not None and len(main_filepath) > 0 and Path(main_filepath).is_file():
+    copyfile(main_filepath, args.out)
+    mode = 'a'
 
-with open(args.out, 'w') as f:
+with open(args.out, mode) as f:
     printer.print_entries(new_entries, file=f)
 
 print('Outputed to ' + args.out)

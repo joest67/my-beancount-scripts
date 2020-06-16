@@ -1,3 +1,7 @@
+from beancount.core import data
+from beancount.core.amount import Amount
+from beancount.core.data import Transaction, Posting
+from beancount.core.number import Decimal
 from beancount.query import query, query_compile
 from beancount.query.query_env import TargetsEnvironment
 from ..accounts import *
@@ -25,6 +29,36 @@ def get_account_by_guess(from_user, description, time=None):
                 return value
             break
     return "Expenses:Unknown"
+
+
+def create_mock_meta():
+    meta = {}
+    return data.new_metadata('beancount/core/testing.beancount', 12345, meta)
+
+
+def create_entry(description, time, real_price, payee,
+                 trade_currency, trade_price, real_currency, account_source) -> Transaction:
+    account = get_account_by_guess(description, '', time)
+    flag = "*"
+    if account == "Unknown":
+        flag = "!"
+
+    entry = Transaction(create_mock_meta(), time, flag, payee,
+                        description, data.EMPTY_SET, data.EMPTY_SET, [])
+
+    if real_currency == trade_currency:
+        data.create_simple_posting(
+            entry, account, trade_price, trade_currency)
+    else:
+        trade_amount = Amount(Decimal(trade_price), trade_currency)
+        real_amount = Amount(Decimal(abs(round(float(
+            real_price), 2))) / Decimal(abs(round(float(trade_price), 2))), real_currency)
+        posting = Posting(account, trade_amount,
+                          None, real_amount, None, None)
+        entry.postings.append(posting)
+
+    data.create_simple_posting(entry, account_source, None, None)
+    return entry
 
 
 def get_income_account_by_guess(from_user, description, time=None):

@@ -7,10 +7,10 @@ import dateparser
 from beancount.core import data
 from beancount.core.data import Note, Transaction
 
+from modules.imports.exc import NotSuitableImporterException
 from ..accounts import accounts
 from . import (DictReaderStrip, get_account_by_guess,
                get_income_account_by_guess, replace_flag)
-from .base import Base
 from .deduplicate import Deduplicate
 
 Account零钱通 = 'Assets:Company:WeChat:Lingqiantong'
@@ -19,13 +19,13 @@ Account支出红包 = 'Expenses:RedBag'
 Account余额 = 'Assets:Balances:WeChat'
 
 
-class WeChat(Base):
+class WeChat(object):
 
     def __init__(self, filename, byte_content, entries, option_map):
         content = byte_content.decode("utf-8-sig")
         lines = content.split("\n")
         if (lines[0].replace(',', '') != '微信支付账单明细\r'):
-            raise 'Not WeChat Trade Record!'
+            raise NotSuitableImporterException('Not WeChat Trade Record!')
 
         print('Import WeChat: ' + lines[2])
         content = "\n".join(lines[16:len(lines)])
