@@ -7,30 +7,163 @@
 from collections import defaultdict
 from datetime import date
 
+import click
 from beancount import loader
-from beancount.core.number import Decimal, ZERO
+from beancount.core.compare import hash_entries
+from beancount.core.number import ZERO
+from beancount.parser import printer
 from beancount.query import query
 
-info_account = ["Liabilities:CreditCard:SSJ"]
-mm_account = ["Liabilities:CreditCard:CMB"]
-filepath = "0615_out.bean"
-
-entries, errors, option_map = loader.load_file(filepath)
+from modules.imports import backup
+from modules.imports.colors import bcolors
 
 
-def query_records(date_start, date_end, accounts, assemble_same_name=True) -> dict:
-    account_param = " or ".join(["account = '%s'" % account for account in accounts])
-    if assemble_same_name:
-        bql = "SELECT date, narration, sum(position) as position where" \
-              " ({}) and date >= {} and date < {} group by date, narration order by date desc"\
-            .format(account_param, date_start, date_end)
-    else:
-        bql = "SELECT date, narration, position, account  where" \
+class GlobalContext(object):
+    def __init__(self):
+        self.aborted = False
+        self.interrupted = False
+        self.entry_changed = False
+        self.interactive = False
+        self.show_paired = False
+
+
+class PairRecordRequest(object):
+
+    @staticmethod
+    def build_by_hash_pair(info_hashes, mm_hashes):
+        request = PairRecordRequest()
+
+
+class CompareGroup(object):
+
+    def __init__(self, info, mm, _date):
+        self.info = info
+        self.mm = mm
+        self.date = _date
+        self._pair_records, self._common_keys = self.__init_pair_key()
+
+    def __init_pair_key(self):
+        info_pair_records = defaultdict(list)
+        for r in self.info.records:
+            info_pair_records[getattr(r, "pair_key")].append(r)
+        mm_pair_records = defaultdict(list)
+        for r in self.mm.records:
+            mm_pair_records[getattr(r, "pair_key")].append(r)
+        common_keys = info_pair_records.keys() | mm_pair_records.keys()
+        ret = [(info_pair_records.get(common_key), mm_pair_records.get(common_key))
+               for common_key in common_keys if common_key is not None]
+        return ret, common_keys
+
+    @property
+    def mm_records(self):
+        return self.mm.records
+
+    @property
+    def info_records(self):
+        return self.info.records
+
+    def diff_amount(self):
+        return self.info.sum() - self.mm.sum()
+
+    @property
+    def pair_records(self):
+        return self._pair_records
+
+    @property
+    def common_keys(self):
+        return self._common_keys
+
+    @property
+    def single_mm_records(self):
+        return [record for record in self.mm.records
+                if getattr(record, "pair_key", None) not in self.common_keys]
+
+    @property
+    def single_info_records(self):
+        return [record for record in self.info.records
+                if getattr(record, "pair_key", None) not in self.common_keys]
+
+    def has_remain_pair_records(self):
+        return len(self.single_mm_records) > 0 and (self.single_info_records) > 0
+
+
+class RecordStorage(object):
+
+    info_account = ["Liabilities:CreditCard:SSJ"]
+    mm_account = ["Liabilities:CreditCard:CMB"]
+
+    def __init__(self):
+        self.entries = None
+        self.option_map = None
+        self.hash_entry_map = None
+        self.start_date = None
+        self.end_date = None
+        self._info_records = None
+        self._mm_records = None
+
+    def init(self, filepath, start, end):
+        self.start_date = start
+        self.end_date = end
+        self.entries, _, self.option_map = loader.load_file(filepath)
+        self.hash_entry_map, _ = hash_entries(self.entries)
+        self.init_data()
+
+    def init_data(self):
+        self._info_records = self._query_records(self.start_date, self.end_date, self.info_account)
+        self._mm_records = self._query_records(self.start_date, self.end_date, self.mm_account)
+
+    def output_to_file(self, dest_filepath):
+        backup(dest_filepath)
+        with open(dest_filepath, 'w') as f:
+            printer.print_entries(self.entries, file=f)
+        print("rewrite success %s" % dest_filepath)
+
+    @classmethod
+    def arrange_by_date(cls, items):
+        group_by = defaultdict(list)
+        for item in items:
+            group_by[str(item.date)].append(item)
+
+        ret = {}
+        for k, v in group_by.items():
+            _date = v[0].date
+            b = TransactionBlock(_date, v)
+            ret[_date] = b
+        return ret
+
+    def _query_records(self, date_start, date_end, accounts) -> dict:
+        account_param = " or ".join(["account = '%s'" % account for account in accounts])
+        query_params = (account_param, date_start, date_end)
+        bql = "SELECT id, date, narration, position, account, entry_meta('pair_key') as pair_key where" \
               " ({})" \
-              " and date >= {} and date < {} order by date desc"\
-            .format(account_param, date_start, date_end)
-    _, items = query.run_query(entries, option_map, bql)
-    return arrange_by_date(items)
+              " and date >= {} and date <= {} order by date desc"
+        _, items = query.run_query(self.entries, self.option_map, bql, *query_params)
+        return self.arrange_by_date(items)
+
+    @property
+    def info_records(self):
+        return self._info_records
+
+    @property
+    def mm_records(self):
+        return self._mm_records
+
+    def get_sorted_dates(self):
+        dates = self.info_records.keys() | self.mm_records.keys()
+        return sorted(dates)
+
+    def get_by_date(self, _date) -> CompareGroup:
+        info = self.info_records.get(_date, TransactionBlock(_date))
+        mm = self.mm_records.get(_date, TransactionBlock(_date))
+        return CompareGroup(info, mm, _date)
+
+    def pair_records(self, hash_ids, pair_key):
+        for hash_id in hash_ids:
+            self.hash_entry_map.get(hash_id).meta["pair_key"] = pair_key
+
+
+storage = RecordStorage()
+global_context = GlobalContext()
 
 
 def _get_number(r):
@@ -43,10 +176,11 @@ class TransactionBlock(object):
 
     def __init__(self, _date: date, records=None):
         self.date = _date
-        self.records = records
+        self.records = [] if records is None else records
+        self.exclude_records_for_print = []
 
-    def add(self, record):
-        self.records.append(record)
+    def add_exclude(self, *record):
+        self.exclude_records_for_print += list(record)
 
     def sum(self):
         return ZERO if self.is_empty() \
@@ -60,49 +194,184 @@ class TransactionBlock(object):
     def is_empty(self):
         return self.records is None or len(self.records) == 0
 
+    def _assemble(self):
+        _records = sorted(self.records, key=lambda r: r.position)
+        excludes_record_sets = {r.id for r in self.exclude_records_for_print}
+        return [(str(idx + 1), record) for idx, record in enumerate(_records)
+                if record.id not in excludes_record_sets]
 
-def format_records(records, prefix):
-    if records is None:
-        return ""
-    _records = sorted(records, key=lambda r: r.position)
-    return "\n".join(["{}{}: {}".format(prefix, record.narration, record.position.to_string(parens=False))
-                      for record in _records])
+    def as_sorted_list(self):
+        return self._assemble()
 
-
-def arrange_by_date(items):
-    group_by = defaultdict(list)
-    for item in items:
-        group_by[str(item.date)].append(item)
-
-    ret = {}
-    for k, v in group_by.items():
-        _date = v[0].date
-        b = TransactionBlock(_date, v)
-        ret[_date] = b
-    return ret
+    def as_sorted_map(self):
+        return dict(self._assemble())
 
 
-def print_readable_cmb_result(info, mm):
-    print("信息流对比资金流差值：({}-{})={}".format(-info.sum(), -mm.sum(), -(info.sum() - mm.sum())))
-    print("%s" % (format_records(info.records, '+')))
-    print("".center(20, '-'))
-    print("%s" % (format_records(mm.records, '-')))
+class Printer(object):
+    RECORD_TEMPLATE = "{0}{1}: {2}"
+    INTERACTIVE_TEMPLATE = "[{0}]{1}: {2}"
+    PAIR_TEMPLATE = "{}: ({},{})"
 
+    @classmethod
+    def get_detail(cls, record):
+        if hasattr(record.position, "units"):
+            return record.position
+        return record.position.to_string(parens=False)
 
-def main():
-    info_records = query_records("2020-05-01", "2020-06-01", info_account)
-    mm_records = query_records("2020-05-01", "2020-06-01", mm_account)
+    @classmethod
+    def print_normal_record(cls, a_records, b_records):
+        print("%s" % (cls._format_records(a_records, '+')))
+        print("".center(20, '-'))
+        print("%s" % (cls._format_records(b_records, '-')))
 
-    dates = info_records.keys() | mm_records.keys()
-    dates_list = sorted(dates)
-    for _date in dates_list:
-        info = info_records.get(_date, TransactionBlock(_date))
-        mm = mm_records.get(_date, TransactionBlock(_date))
-        print(str(_date).center(30, '='))
-        if info == mm:
-            print("same")
+    @classmethod
+    def _format_records(cls, records, prefix=""):
+        if records is None:
+            return ""
+        _records = sorted(records, key=lambda r: r.position)
+        return "\n".join([cls.RECORD_TEMPLATE.format(prefix, record.narration, cls.get_detail(record))
+                          for record in _records])
+
+    @classmethod
+    def print_interactive_record(cls, info, mm):
+        for idx, record in info.as_sorted_list():
+            record_str = cls.INTERACTIVE_TEMPLATE.format(idx, record.narration, cls.get_detail(record))
+            print("%s %s" % ('+', record_str))
+        cls.print_split_line()
+        for idx, record in mm.as_sorted_list():
+            record_str = cls.INTERACTIVE_TEMPLATE.format(idx, record.narration, cls.get_detail(record))
+            print("%s %s" % ('-', record_str))
+
+    @classmethod
+    def print_split_line(cls, content="", splitter='-', size=20, colors=""):
+        if len(colors) > 0:
+            print(colors + content.center(size, splitter) + bcolors.ENDC)
         else:
-            print_readable_cmb_result(info, mm)
+            print(content.center(size, splitter))
+
+    @classmethod
+    def print_date_split(cls, _date):
+        cls.print_split_line(_date, '=', 40, colors=bcolors.WARNING)
+
+    @classmethod
+    def print_pair_record(cls, paired):
+        _sum = lambda records: sum(_get_number(r) for r in records)
+        _detail = lambda records: ','.join([r.narration for r in records])
+        _str = "\n".join([cls.PAIR_TEMPLATE.format(-_sum(p[0]), _detail(p[0]), _detail(p[1])) for p in paired])
+        print(_str)
+
+
+def process_cmp_result(compare_group):
+    print("信息流对比资金流差值：({}-{})={}".format(-compare_group.info.sum(), -compare_group.mm.sum(),
+                                         -(compare_group.diff_amount())))
+
+    # 没有匹配的记录
+    if len(compare_group.pair_records) <= 0:
+        start_interactive_handle(compare_group)
+
+    else:
+        if global_context.show_paired:
+            Printer.print_pair_record(compare_group)
+            Printer.print_split_line()
+
+        if global_context.interactive and compare_group.has_remain_pair_records():
+            start_interactive_handle(compare_group)
+        else:
+            Printer.print_normal_record(compare_group.single_info_records, compare_group.single_mm_records)
+
+
+def get_detail(record):
+    if hasattr(record.position, "units"):
+        return record.position
+    return record.position.to_string(parens=False)
+
+
+def build_pair_key(info, info_record_ids):
+    idx = info_record_ids.split(",")[0]
+    return info.as_sorted_map().get(idx).id
+
+
+def start_interactive_handle(compare_group):
+    Printer.print_interactive_record(compare_group.info, compare_group.mm)
+    try:
+        handle_input(compare_group)
+    except EOFError:
+        global_context.interrupted = True
+    except KeyboardInterrupt:
+        global_context.aborted = True
+
+
+def check_pair_amount(info_update_records, mm_update_records):
+    a = abs(sum(_get_number(r) for r in info_update_records))
+    b = abs(sum(_get_number(r) for r in mm_update_records))
+    diff = abs(a - b)
+    if diff < 1:
+        return True
+    print("amount diff %s, discard pair operation", diff)
+    return False
+
+
+def parse_pair_response(input_str):
+    # reg pattern compare
+    try:
+        return [pair.split(":") for pair in input_str.strip(";:").split(";")]
+    except:
+        print("input format error, " + input_str)
+        return []
+
+
+def handle_input(compare_group):
+    info = compare_group.info
+    mm = compare_group.mm
+    action = input("input: >")
+    if len(action) <= 0:
+        # ignore
+        return
+
+    paired = parse_pair_response(action)
+    for info_record_ids, mm_record_ids in paired:
+        pair_key = build_pair_key(info, info_record_ids)
+        assert pair_key is not None, "pair_key is null"
+
+        _info_map = info.as_sorted_map()
+        _mm_map = mm.as_sorted_map()
+        info_update_records = [_info_map.get(idx) for idx in info_record_ids.split(',')]
+        mm_update_records = [_mm_map.get(idx) for idx in mm_record_ids.split(',')]
+        check_passed = check_pair_amount(info_update_records, mm_update_records)
+        if check_passed:
+            update_hashes = {r.id for r in info_update_records} | {r.id for r in mm_update_records}
+            storage.pair_records(update_hashes, pair_key)
+            global_context.entry_changed = True
+
+
+@click.command()
+@click.option("--show_paired", default=False, help="是否展示已配对数据", type=click.BOOL)
+@click.option("--interactive", default=False, help="对账模式", type=click.BOOL)
+@click.option("--start", help="开始日期", type=click.DateTime(formats=["%Y-%m-%d"]))
+@click.option("--end", help="截止日期", type=click.DateTime(formats=["%Y-%m-%d"]))
+@click.option("--filepath", help="账号文件")
+def main(interactive, show_paired, start: date, end: date, filepath):
+    storage.init(filepath, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+
+    global_context.interactive = interactive
+    global_context.show_paired = show_paired
+
+    dates_list = storage.get_sorted_dates()
+    for _date in dates_list:
+        compare_group = storage.get_by_date(_date)
+        Printer.print_date_split(str(_date))
+        process_cmp_result(compare_group)
+
+        if global_context.interrupted:
+            print("exit after saving")
+            break
+
+        if global_context.aborted:
+            print("exit without saving")
+            exit(0)
+
+    if global_context.entry_changed:
+        storage.output_to_file(filepath)
 
 
 if __name__ == '__main__':

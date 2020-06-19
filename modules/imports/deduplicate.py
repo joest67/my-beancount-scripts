@@ -16,12 +16,13 @@ class Deduplicate:
         # 要查询的是实际付款的账户，而不是支出信息
         bql = "SELECT flag, filename, lineno, location, account, year, month, day, str(entry_meta('timestamp')) as timestamp," \
               " metas() as metas WHERE year = {} AND month = {} AND day = {} AND number(convert(units(position), '{}')) = {}" \
-              " ORDER BY timestamp ASC".format(
-            entry.date.year, entry.date.month, entry.date.day, currency, money)
-        items = query.run_query(self.entries, self.option_map, bql)
+              " ORDER BY timestamp ASC"
+        params = (entry.date.year, entry.date.month, entry.date.day, currency, money)
+        items = query.run_query(self.entries, self.option_map, bql, *params)
         length = len(items[1])
-        if (length == 0):
+        if length == 0:
             return False
+
         updated_items = []
         for item in items[1]:
             same_trade = False

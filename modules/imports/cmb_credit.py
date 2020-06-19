@@ -21,6 +21,14 @@ trade_area_list = {
     'NL': 'NL'
 }
 
+"""
+TODO
+1. 过滤 自动购、自动还款 的记录
+2. 识别美元和其他货币
+"""
+
+BLACK_KEYWORD_LIST = ["自动购", "自动还款"]
+
 
 def read_content(filename):
     try:
@@ -76,6 +84,7 @@ class BaseParser(object):
         return create_entry(description, time, real_price, payee,
                             trade_currency, trade_price, real_currency, Account_CMB)
 
+
 class EmlParser(BaseParser):
 
     def __init__(self, filename):
@@ -98,6 +107,9 @@ class EmlParser(BaseParser):
     def after_match(self, *args):
         self.parsed_eml = args[0]
         self.soup = BeautifulSoup(self.parsed_eml['body'][0]['content'], 'html.parser')
+
+    def ignore_record(self, description):
+        return any([keyword in description for keyword in BLACK_KEYWORD_LIST])
 
     def parse(self):
         transactions = []
@@ -138,13 +150,18 @@ class EmlParser(BaseParser):
                 description = full_descriptions[0]
             else:
                 description = '-'.join(full_descriptions[1:])
-            real_currency = 'CNY'
-            real_price = tds[start_pos + 4].text \
+            if self.ignore_record(description):
+                print("ignore hit black keyword {}".format(description))
+                continue
+            trade_currency = real_currency = 'CNY'
+            trade_price = real_price = tds[start_pos + 4].text \
                 .replace('￥', '') \
-                .replace('$', '') \
                 .replace('\xa0', '').strip()
-            trade_price = tds[start_pos + 6].text.replace('\xa0', '').strip()
-            trade_currency = change_currency(tds[start_pos + 7].text.strip())
+            if "$" in real_price:
+                print("ignore us record {}".format(description))
+                continue
+            # trade_price = tds[start_pos + 6].text.replace('\xa0', '').strip()
+            # trade_currency = change_currency(tds[start_pos + 7].text.strip())
             print("{}: Importing {} at {}".format(idx, description, time))
 
             entry = self.create_entry(description, time, real_price, payee,

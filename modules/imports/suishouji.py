@@ -2,6 +2,7 @@ import argparse
 from datetime import date, datetime
 from shutil import copyfile
 
+import click
 import requests
 from beancount.parser import printer
 from pycookiecheat import chrome_cookies
@@ -50,12 +51,16 @@ def do_request(url, data, max_retries=5):
     raise BaseBizException("response status get %s" % status_code)
 
 
+def filter_type(record):
+    return record.get("tranName") == "支出"
+
+
 def parse_records(*json_val_list):
     ret = []
     for json_val in json_val_list:
         for group in json_val["groups"]:
             ret += group["list"]
-    return ret
+    return list(filter(filter_type, ret))
 
 
 def fetch_records(date_start: date, date_end: date):
@@ -99,30 +104,27 @@ def convert(record):
     return entry
 
 
-def main(start, end, exists, filepath):
-    date_start = datetime.strptime(start, '%Y-%m-%d').date()
-    date_end = datetime.strptime(end, '%Y-%m-%d').date()
-    print("%s - %s" % (date_start, date_end))
-    records = fetch_records(date_start, date_end)
+@click.command()
+@click.argument("start", type=click.DateTime(formats=["%Y-%m-%d"]))
+@click.argument("end", type=click.DateTime(formats=["%Y-%m-%d"]))
+@click.option("--entry", help="Entry bean path")
+@click.option("--out", default='out.bean', help="Output bean path")
+def main(start, end, entry, out):
+    print("%s - %s" % (start, end))
+    records = fetch_records(start, end)
     print("records: %s" % len(records))
     new_entries = [convert(r) for r in records]
 
     mode = 'w'
-    if exists is not None:
-        copyfile(exists, filepath)
+    if entry is not None:
+        copyfile(entry, out)
         mode = 'a'
 
-    with open(filepath, mode) as f:
+    with open(out, mode) as f:
         printer.print_entries(new_entries, file=f)
 
-    print('Outputed to ' + filepath)
+    print('Outputed to ' + out)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser("suishouji")
-    parser.add_argument("--start", help="start date, fmt: 2020-05-01")
-    parser.add_argument("--end", help="start date, fmt: 2020-05-01")
-    parser.add_argument("--entry", help="Entry bean path (default = main.bean)", default='main.bean')
-    parser.add_argument("--out", help="Output bean path", default='out.bean')
-    args = parser.parse_args()
-    main(args.start, args.end, args.entry, args.out)
+    main()

@@ -1,11 +1,15 @@
+import csv
+import time
+from shutil import copyfile
+
 from beancount.core import data
 from beancount.core.amount import Amount
 from beancount.core.data import Transaction, Posting
 from beancount.core.number import Decimal
-from beancount.query import query, query_compile
+from beancount.query import query_compile
 from beancount.query.query_env import TargetsEnvironment
+
 from ..accounts import *
-import csv
 
 
 def replace_flag(entry, flag):
@@ -108,6 +112,12 @@ class DictReaderStrip(csv.DictReader):
             for key in self.fieldnames[lr:]:
                 d[key] = self.restval.strip()
         return d
+
+
+def backup(filename, dest_filepath=None):
+    if dest_filepath is None:
+        dest_filepath = '{}_{}'.format(filename, str(int(time.time())))
+    copyfile(filename, dest_filepath)
 
 
 class Metas(query_compile.EvalFunction):
