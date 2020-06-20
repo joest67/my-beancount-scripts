@@ -45,22 +45,17 @@ class CompareGroup(object):
     def __init_pair_key(self):
         info_pair_records = defaultdict(list)
         for r in self.info.records:
-            info_pair_records[getattr(r, "pair_key")].append(r)
+            info_pair_records[self.get_pair_key(r)].append(r)
         mm_pair_records = defaultdict(list)
         for r in self.mm.records:
-            mm_pair_records[getattr(r, "pair_key")].append(r)
-        common_keys = info_pair_records.keys() | mm_pair_records.keys()
+            mm_pair_records[self.get_pair_key(r)].append(r)
+        common_keys = (info_pair_records.keys() | mm_pair_records.keys()) ^ {None}
         ret = [(info_pair_records.get(common_key), mm_pair_records.get(common_key))
                for common_key in common_keys if common_key is not None]
         return ret, common_keys
 
-    @property
-    def mm_records(self):
-        return self.mm.records
-
-    @property
-    def info_records(self):
-        return self.info.records
+    def get_pair_key(self, record):
+        return getattr(record, "pair_key")
 
     def diff_amount(self):
         return self.info.sum() - self.mm.sum()
@@ -73,18 +68,27 @@ class CompareGroup(object):
     def common_keys(self):
         return self._common_keys
 
+    def sort_by_amount(self, r):
+        return r.position
+
+    def _single_mm_records(self):
+        return [record for record in self.mm.records
+                if self.get_pair_key(record) not in self.common_keys]
+
     @property
     def single_mm_records(self):
-        return [record for record in self.mm.records
-                if getattr(record, "pair_key", None) not in self.common_keys]
+        return sorted(self._single_mm_records(), key=self.sort_by_amount)
+
+    def _single_info_records(self):
+        return [record for record in self.info.records
+                if self.get_pair_key(record) not in self.common_keys]
 
     @property
     def single_info_records(self):
-        return [record for record in self.info.records
-                if getattr(record, "pair_key", None) not in self.common_keys]
+        return sorted(self._single_info_records(), key=self.sort_by_amount)
 
     def has_remain_pair_records(self):
-        return len(self.single_mm_records) > 0 and (self.single_info_records) > 0
+        return len(self.single_mm_records) > 0 and len(self.single_info_records) > 0
 
 
 class RecordStorage(object):
@@ -113,10 +117,10 @@ class RecordStorage(object):
         self._mm_records = self._query_records(self.start_date, self.end_date, self.mm_account)
 
     def output_to_file(self, dest_filepath):
-        backup(dest_filepath)
+        backup_file = backup(dest_filepath)
         with open(dest_filepath, 'w') as f:
             printer.print_entries(self.entries, file=f)
-        print("rewrite success %s" % dest_filepath)
+        print("rewrite success %s, bakup %s" % (dest_filepath, backup_file))
 
     @classmethod
     def arrange_by_date(cls, items):
@@ -177,10 +181,6 @@ class TransactionBlock(object):
     def __init__(self, _date: date, records=None):
         self.date = _date
         self.records = [] if records is None else records
-        self.exclude_records_for_print = []
-
-    def add_exclude(self, *record):
-        self.exclude_records_for_print += list(record)
 
     def sum(self):
         return ZERO if self.is_empty() \
@@ -193,18 +193,6 @@ class TransactionBlock(object):
 
     def is_empty(self):
         return self.records is None or len(self.records) == 0
-
-    def _assemble(self):
-        _records = sorted(self.records, key=lambda r: r.position)
-        excludes_record_sets = {r.id for r in self.exclude_records_for_print}
-        return [(str(idx + 1), record) for idx, record in enumerate(_records)
-                if record.id not in excludes_record_sets]
-
-    def as_sorted_list(self):
-        return self._assemble()
-
-    def as_sorted_map(self):
-        return dict(self._assemble())
 
 
 class Printer(object):
@@ -220,9 +208,9 @@ class Printer(object):
 
     @classmethod
     def print_normal_record(cls, a_records, b_records):
-        print("%s" % (cls._format_records(a_records, '+')))
-        print("".center(20, '-'))
-        print("%s" % (cls._format_records(b_records, '-')))
+        cls._print_with_color(cls._format_records(a_records), bcolors.OKBLUE)
+        cls.print_split_line()
+        cls._print_with_color(cls._format_records(b_records), bcolors.FAIL)
 
     @classmethod
     def _format_records(cls, records, prefix=""):
@@ -233,14 +221,18 @@ class Printer(object):
                           for record in _records])
 
     @classmethod
-    def print_interactive_record(cls, info, mm):
-        for idx, record in info.as_sorted_list():
+    def _print_with_color(cls, _str, colors=""):
+        print(colors + _str + bcolors.ENDC)
+
+    @classmethod
+    def print_interactive_record(cls, compare_group):
+        for idx, record in enumerate(compare_group.single_info_records):
             record_str = cls.INTERACTIVE_TEMPLATE.format(idx, record.narration, cls.get_detail(record))
-            print("%s %s" % ('+', record_str))
+            cls._print_with_color(record_str, bcolors.OKBLUE)
         cls.print_split_line()
-        for idx, record in mm.as_sorted_list():
+        for idx, record in enumerate(compare_group.single_mm_records):
             record_str = cls.INTERACTIVE_TEMPLATE.format(idx, record.narration, cls.get_detail(record))
-            print("%s %s" % ('-', record_str))
+            cls._print_with_color(record_str, bcolors.FAIL)
 
     @classmethod
     def print_split_line(cls, content="", splitter='-', size=20, colors=""):
@@ -258,26 +250,21 @@ class Printer(object):
         _sum = lambda records: sum(_get_number(r) for r in records)
         _detail = lambda records: ','.join([r.narration for r in records])
         _str = "\n".join([cls.PAIR_TEMPLATE.format(-_sum(p[0]), _detail(p[0]), _detail(p[1])) for p in paired])
-        print(_str)
+        cls._print_with_color(_str, bcolors.OKGREEN)
 
 
 def process_cmp_result(compare_group):
     print("信息流对比资金流差值：({}-{})={}".format(-compare_group.info.sum(), -compare_group.mm.sum(),
                                          -(compare_group.diff_amount())))
 
-    # 没有匹配的记录
-    if len(compare_group.pair_records) <= 0:
+    if global_context.show_paired and len(compare_group.pair_records) > 0:
+        Printer.print_pair_record(compare_group.pair_records)
+        Printer.print_split_line()
+
+    if global_context.interactive and compare_group.has_remain_pair_records():
         start_interactive_handle(compare_group)
-
     else:
-        if global_context.show_paired:
-            Printer.print_pair_record(compare_group)
-            Printer.print_split_line()
-
-        if global_context.interactive and compare_group.has_remain_pair_records():
-            start_interactive_handle(compare_group)
-        else:
-            Printer.print_normal_record(compare_group.single_info_records, compare_group.single_mm_records)
+        Printer.print_normal_record(compare_group.single_info_records, compare_group.single_mm_records)
 
 
 def get_detail(record):
@@ -286,13 +273,13 @@ def get_detail(record):
     return record.position.to_string(parens=False)
 
 
-def build_pair_key(info, info_record_ids):
+def build_pair_key(compare_group, info_record_ids):
     idx = info_record_ids.split(",")[0]
-    return info.as_sorted_map().get(idx).id
+    return compare_group.single_info_records[int(idx)].id
 
 
 def start_interactive_handle(compare_group):
-    Printer.print_interactive_record(compare_group.info, compare_group.mm)
+    Printer.print_interactive_record(compare_group)
     try:
         handle_input(compare_group)
     except EOFError:
@@ -321,22 +308,20 @@ def parse_pair_response(input_str):
 
 
 def handle_input(compare_group):
-    info = compare_group.info
-    mm = compare_group.mm
-    action = input("input: >")
+    action = input("pair action: >")
     if len(action) <= 0:
         # ignore
         return
 
     paired = parse_pair_response(action)
     for info_record_ids, mm_record_ids in paired:
-        pair_key = build_pair_key(info, info_record_ids)
+        pair_key = build_pair_key(compare_group, info_record_ids)
         assert pair_key is not None, "pair_key is null"
 
-        _info_map = info.as_sorted_map()
-        _mm_map = mm.as_sorted_map()
-        info_update_records = [_info_map.get(idx) for idx in info_record_ids.split(',')]
-        mm_update_records = [_mm_map.get(idx) for idx in mm_record_ids.split(',')]
+        info_update_records = [compare_group.single_info_records[int(idx)]
+                               for idx in info_record_ids.split(',')]
+        mm_update_records = [compare_group.single_mm_records[int(idx)]
+                             for idx in mm_record_ids.split(',')]
         check_passed = check_pair_amount(info_update_records, mm_update_records)
         if check_passed:
             update_hashes = {r.id for r in info_update_records} | {r.id for r in mm_update_records}
@@ -350,7 +335,7 @@ def handle_input(compare_group):
 @click.option("--start", help="开始日期", type=click.DateTime(formats=["%Y-%m-%d"]))
 @click.option("--end", help="截止日期", type=click.DateTime(formats=["%Y-%m-%d"]))
 @click.option("--filepath", help="账号文件")
-def main(interactive, show_paired, start: date, end: date, filepath):
+def main(show_paired, interactive, start: date, end: date, filepath):
     storage.init(filepath, start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
 
     global_context.interactive = interactive

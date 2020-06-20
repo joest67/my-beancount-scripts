@@ -116,8 +116,9 @@ class DictReaderStrip(csv.DictReader):
 
 def backup(filename, dest_filepath=None):
     if dest_filepath is None:
-        dest_filepath = '{}_{}'.format(filename, str(int(time.time())))
+        dest_filepath = '{}_{}.bak'.format(filename, str(int(time.time())))
     copyfile(filename, dest_filepath)
+    return dest_filepath
 
 
 class Metas(query_compile.EvalFunction):
