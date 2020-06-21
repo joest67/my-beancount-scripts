@@ -27,11 +27,17 @@ class GlobalContext(object):
         self.show_paired = False
 
 
-class PairRecordRequest(object):
+def _get_number(r):
+    if hasattr(r.position, "units"):
+        return r.position.units.number
+    return r.position.get_currency_units("CNY").number
 
-    @staticmethod
-    def build_by_hash_pair(info_hashes, mm_hashes):
-        request = PairRecordRequest()
+
+def sum_records(records):
+    if records is None or len(records) == 0:
+        return ZERO
+    else:
+        return sum(_get_number(r) for r in records)
 
 
 class CompareGroup(object):
@@ -87,8 +93,70 @@ class CompareGroup(object):
     def single_info_records(self):
         return sorted(self._single_info_records(), key=self.sort_by_amount)
 
+    def has_remain_records(self):
+        return len(self.single_mm_records) > 0 or len(self.single_info_records) > 0
+
     def has_remain_pair_records(self):
         return len(self.single_mm_records) > 0 and len(self.single_info_records) > 0
+
+
+class SameGroup(object):
+    def __init__(self, records, all_records):
+        self.records = records
+        self.all_records_map = {r.id: idx for idx, r in enumerate(all_records)}
+
+    def sum(self):
+        return sum_records(self.records)
+
+    def hash_ids(self):
+        return [r.id for r in self.records]
+
+    def _index(self, record):
+        return self.all_records_map.get(record.id)
+
+    def join_index(self):
+        return ",".join([str(self._index(r)) for r in self.records])
+
+
+class PairGuess(object):
+    def __init__(self, compare_group: CompareGroup):
+        self.compare_group = compare_group
+        self._prompt_hint = None
+        self._paired_records = []
+        self.__pair()
+
+    def __pair(self):
+        if not self.compare_group.has_remain_pair_records():
+            return
+
+        mm_assemble_records = self.group_by(self.compare_group.single_mm_records)
+        info_assemble_records = self.group_by(self.compare_group.single_info_records)
+        for mm in mm_assemble_records:
+            for info in info_assemble_records:
+                if mm.sum() == info.sum():
+                    self._paired_records.append((info, mm))
+                    # 只匹配一次 TODO
+                    break
+
+    def group_by(self, records):
+        ret = defaultdict(list)
+        for r in records:
+            ret[r.narration].append(r)
+        return [SameGroup(group_records, records) for group_records in ret.values()]
+
+    def has_paired_records(self):
+        return len(self.paired_records) > 0
+
+    @property
+    def prompt_hint(self):
+        if not self.has_paired_records():
+            return ""
+        hint = ";".join([a.join_index() + ":" + b.join_index() for a, b in self.paired_records])
+        return hint
+
+    @property
+    def paired_records(self):
+        return self._paired_records
 
 
 class RecordStorage(object):
@@ -170,12 +238,6 @@ storage = RecordStorage()
 global_context = GlobalContext()
 
 
-def _get_number(r):
-    if hasattr(r.position, "units"):
-        return r.position.units.number
-    return r.position.get_currency_units("CNY").number
-
-
 class TransactionBlock(object):
 
     def __init__(self, _date: date, records=None):
@@ -183,16 +245,12 @@ class TransactionBlock(object):
         self.records = [] if records is None else records
 
     def sum(self):
-        return ZERO if self.is_empty() \
-            else sum(_get_number(r) for r in self.records)
+        return sum_records(self.records)
 
     def __eq__(self, other):
         if not isinstance(other, TransactionBlock):
             return False
         return self.sum() == other.sum()
-
-    def is_empty(self):
-        return self.records is None or len(self.records) == 0
 
 
 class Printer(object):
@@ -207,10 +265,10 @@ class Printer(object):
         return record.position.to_string(parens=False)
 
     @classmethod
-    def print_normal_record(cls, a_records, b_records):
-        cls._print_with_color(cls._format_records(a_records), bcolors.OKBLUE)
+    def print_normal_record(cls, compare_group):
+        cls._print_with_color(cls._format_records(compare_group.single_info_records), bcolors.OKBLUE)
         cls.print_split_line()
-        cls._print_with_color(cls._format_records(b_records), bcolors.FAIL)
+        cls._print_with_color(cls._format_records(compare_group.single_mm_records), bcolors.FAIL)
 
     @classmethod
     def _format_records(cls, records, prefix=""):
@@ -264,7 +322,8 @@ def process_cmp_result(compare_group):
     if global_context.interactive and compare_group.has_remain_pair_records():
         start_interactive_handle(compare_group)
     else:
-        Printer.print_normal_record(compare_group.single_info_records, compare_group.single_mm_records)
+        if compare_group.has_remain_records():
+            Printer.print_normal_record(compare_group)
 
 
 def get_detail(record):
@@ -308,9 +367,14 @@ def parse_pair_response(input_str):
 
 
 def handle_input(compare_group):
-    action = input("pair action: >")
-    if len(action) <= 0:
-        # ignore
+    pair_guess = PairGuess(compare_group)
+    input_hint = 'input pair action:'
+    if pair_guess.has_paired_records():
+        input_hint += '[default: %s]' % pair_guess.prompt_hint
+    action = input(input_hint + ">")
+    if len(action) <= 0 and pair_guess.has_paired_records():
+        action = pair_guess.prompt_hint
+    elif len(action.strip(' ')) <= 0:
         return
 
     paired = parse_pair_response(action)
@@ -330,7 +394,7 @@ def handle_input(compare_group):
 
 
 @click.command()
-@click.option("--show_paired", default=False, help="是否展示已配对数据", type=click.BOOL)
+@click.option("--show_paired", default=True, help="是否展示已配对数据", type=click.BOOL)
 @click.option("--interactive", default=False, help="对账模式", type=click.BOOL)
 @click.option("--start", help="开始日期", type=click.DateTime(formats=["%Y-%m-%d"]))
 @click.option("--end", help="截止日期", type=click.DateTime(formats=["%Y-%m-%d"]))

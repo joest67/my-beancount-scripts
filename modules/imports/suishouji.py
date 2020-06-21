@@ -1,13 +1,11 @@
-import argparse
 from datetime import date, datetime
-from shutil import copyfile
 
 import click
 import requests
 from beancount.parser import printer
 from pycookiecheat import chrome_cookies
 
-from modules.imports import create_entry
+from modules.imports import create_entry, backup
 from modules.imports.exc import BaseBizException
 
 Account_suishouji = 'Liabilities:CreditCard:SSJ'
@@ -117,7 +115,7 @@ def main(start, end, entry, out):
 
     mode = 'w'
     if entry is not None:
-        copyfile(entry, out)
+        backup(entry, out)
         mode = 'a'
 
     with open(out, mode) as f:

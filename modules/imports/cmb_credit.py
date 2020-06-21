@@ -1,6 +1,6 @@
 import abc
 import csv
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import eml_parser
 from beancount.core import data
@@ -48,13 +48,14 @@ def change_currency(currency):
     return trade_area_list[currency]
 
 
-def get_date(detail_date, mdate):
-    month = detail_date[0:2]
-    day = detail_date[2:4]
-    year = mdate.year
-    ret = date(year, int(month), int(day))
-    if month == '12' and ret > mdate:
-        ret = ret.replace(ret.year - 1)
+def get_date(detail_date, post_date, today, description):
+    _date_str = post_date if len(detail_date.strip(' ')) <= 0 else detail_date
+    if '分期' in description:
+        _date_str = post_date
+    _date = datetime.strptime(_date_str, '%m%d')
+    ret = date(today.year, _date.month, _date.day)
+    if ret > today:
+        ret = ret.replace(year=ret.year - 1)
     return ret
 
 
@@ -64,7 +65,7 @@ class BaseParser(object):
 
     def __init__(self, filename):
         self.filename = filename
-        self.mdate = date.today()
+        self.today = date.today()
 
     @abc.abstractmethod
     def match(self) -> bool:
@@ -140,16 +141,17 @@ class EmlParser(BaseParser):
                 continue
             # ""|trade_date|post_date|description|
             start_pos = 0
-            trade_date = tds[start_pos + 1].text.strip()
-            if trade_date == '':
-                trade_date = tds[start_pos + 2].text.strip()
-            time = get_date(trade_date, self.mdate)
             full_descriptions = tds[start_pos + 3].text.strip().split('-')
             payee = full_descriptions[0]
             if len(full_descriptions) == 1:
                 description = full_descriptions[0]
             else:
                 description = '-'.join(full_descriptions[1:])
+
+            trade_date = tds[start_pos + 1].text.strip()
+            post_date = tds[start_pos + 2].text.strip()
+            time = get_date(trade_date, post_date, self.today, description)
+
             if self.ignore_record(description):
                 print("ignore hit black keyword {}".format(description))
                 continue
@@ -239,8 +241,9 @@ class CMBCredit(object):
             duplicate = self.do_duplicate_check(trans, amount)
             if not duplicate:
                 ret.append(trans)
-        self.deduplicate.apply_beans()
+        # self.deduplicate.apply_beans()
         return transactions
 
     def do_duplicate_check(self, entry, amount):
-        return self.deduplicate.find_duplicate(entry, -amount, None, Account_CMB)
+        return False
+        # return self.deduplicate.find_duplicate(entry, -amount, None, Account_CMB)
