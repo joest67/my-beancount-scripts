@@ -1,5 +1,7 @@
+import abc
 import csv
 import time
+from datetime import date
 from shutil import copyfile
 
 from beancount.core import data
@@ -9,7 +11,83 @@ from beancount.core.number import Decimal
 from beancount.query import query_compile
 from beancount.query.query_env import TargetsEnvironment
 
+from .deduplicate import Deduplicate
+from .exc import NotSuitableImporterException
 from ..accounts import *
+
+
+class BaseParser(object):
+
+    __metaclass__ = abc.ABCMeta
+
+    def __init__(self, filename, byte_content, entries, option_map):
+        self.filename = filename
+        self.today = date.today()
+        self.deduplicate = Deduplicate(entries, option_map)
+        match = self.check_match()
+        if not match:
+            raise NotSuitableImporterException("default raise")
+
+    @abc.abstractmethod
+    def check_match(self) -> bool:
+        return False
+
+    @abc.abstractmethod
+    def parse(self):
+        pass
+
+    @staticmethod
+    def create_mock_meta():
+        meta = {}
+        return data.new_metadata('beancount/core/testing.beancount', 12345, meta)
+
+    def create_entry(self, description, time, real_price, payee,
+                     trade_currency, trade_price, real_currency, account) -> Transaction:
+        return create_entry(description, time, real_price, payee,
+                            trade_currency, trade_price, real_currency, account)
+
+
+class CsvContent(object):
+
+    def __init__(self, header, rows):
+        self.header = header
+        self.rows = rows
+        self.size = len(rows)
+
+    def __iter__(self):
+        self.pos = 0
+        return self
+
+    def __next__(self):  # type: () -> dict
+        if self.pos >= self.size:
+            raise StopIteration
+        row = self.rows[self.pos]
+        self.pos += 1
+        return dict(zip(self.header, row))
+
+
+class CsvReader(object):
+
+    STRIP_CHARS = ' \t'
+
+    def __init__(self, filename, splitter=','):
+        self.filename = filename
+        self.splitter = splitter
+
+    def parse(self) -> CsvContent:
+        header = None
+        rows = []
+        with open(self.filename) as csv_file:
+            reader = csv.reader(csv_file, delimiter=',')
+            for idx, line in enumerate(reader):
+                if idx == 0:
+                    header = self.__parse_line(line)
+                    continue
+                rows.append(self.__parse_line(line))
+        return CsvContent(header, rows)
+
+    def __parse_line(self, columns):  # type: (list) -> list
+        return [c.strip(self.STRIP_CHARS) for c in columns]
 
 
 def replace_flag(entry, flag):

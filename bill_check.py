@@ -268,7 +268,7 @@ class Printer(object):
     def print_normal_record(cls, compare_group):
         cls._print_with_color(cls._format_records(compare_group.single_info_records), bcolors.OKBLUE)
         cls.print_split_line()
-        cls._print_with_color(cls._format_records(compare_group.single_mm_records), bcolors.FAIL)
+        cls._print_with_color(cls._format_records(compare_group.single_mm_records), bcolors.OKGREEN)
 
     @classmethod
     def _format_records(cls, records, prefix=""):
@@ -308,12 +308,15 @@ class Printer(object):
         _sum = lambda records: sum(_get_number(r) for r in records)
         _detail = lambda records: ','.join([r.narration for r in records])
         _str = "\n".join([cls.PAIR_TEMPLATE.format(-_sum(p[0]), _detail(p[0]), _detail(p[1])) for p in paired])
-        cls._print_with_color(_str, bcolors.OKGREEN)
+        cls._print_with_color(_str, bcolors.GRAY)
 
 
 def process_cmp_result(compare_group):
-    print("信息流对比资金流差值：({}-{})={}".format(-compare_group.info.sum(), -compare_group.mm.sum(),
-                                         -(compare_group.diff_amount())))
+    colors = "" if compare_group.diff_amount() == 0 else bcolors.FAIL
+    Printer._print_with_color("信息流对比资金流差值：({}-{})={}"
+                              .format(-compare_group.info.sum(), -compare_group.mm.sum(),
+                                      -(compare_group.diff_amount())),
+                              colors=colors)
 
     if global_context.show_paired and len(compare_group.pair_records) > 0:
         Printer.print_pair_record(compare_group.pair_records)

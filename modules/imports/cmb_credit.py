@@ -180,7 +180,11 @@ class CsvParser(BaseParser):
 
     def match(self) -> bool:
         """"format 交易日期,	记账日期,	交易摘要,	交易地点,	卡号末四位,	人民币金额,	交易地金额"""
-        return self.filename is not None and self.filename.endswith("csv")
+        # 正则匹配 todo
+        matched = self.filename is not None and self.filename.endswith("csv") and \
+            'cmb' in self.filename and 'credit' in self.filename
+        return matched
+
 
     def parse(self):
         ret = []

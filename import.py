@@ -1,16 +1,11 @@
 import click
 from beancount.parser import printer
 
-from modules.imports.alipay import Alipay
-from modules.imports.citic_credit import CITICCredit
 from modules.imports.cmb_credit import CMBCredit
-from modules.imports.cmbc_credit import CMBCCredit
+from modules.imports.cmb_debit import CMBDebit
 from modules.imports.exc import NotSuitableImporterException
-from modules.imports.icbc_debit import ICBCDebit
-from modules.imports.wechat import WeChat
-from modules.imports.yuebao import YuEBao
 
-importers = [CMBCredit]
+importers = [CMBCredit, CMBDebit]
 
 
 def write_to_file(all_entries, out_filepath):
@@ -46,7 +41,7 @@ def import_account(filepath):
             print(e)
     if instance is None:
         print("No suitable importer for file: %s" % filepath)
-        return None
+        exit(1)
     return instance.parse()
 
 
