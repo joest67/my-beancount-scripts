@@ -1,10 +1,10 @@
 import abc
 import csv
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import eml_parser
 from beancount.core import data
-from beancount.core.data import Amount, Decimal, Posting, Transaction
+from beancount.core.data import Transaction
 from bs4 import BeautifulSoup
 
 from modules.imports.exc import NotSuitableImporterException
@@ -84,6 +84,14 @@ class BaseParser(object):
                      trade_currency, trade_price, real_currency) -> Transaction:
         return create_entry(description, time, real_price, payee,
                             trade_currency, trade_price, real_currency, Account_CMB)
+
+
+def import_suishouji(entry: Transaction):
+    from modules.imports.suishouji import import_record
+    d = entry.date
+    dt = datetime(year=d.year, month=d.month, day=d.day)
+    print(entry.postings[0].units.number)
+    import_record(dt, str(entry.postings[0].units.number), entry.narration)
 
 
 class EmlParser(BaseParser):
@@ -168,6 +176,7 @@ class EmlParser(BaseParser):
 
             entry = self.create_entry(description, time, real_price, payee,
                                       trade_currency, trade_price, real_currency)
+            import_suishouji(entry)
             transactions.append(entry)
 
         return transactions
@@ -209,6 +218,7 @@ class CsvParser(BaseParser):
 
                 print("{}: Importing {} at {}".format(idx, description, time))
                 entry = self.create_entry(description, time, real_price, payee, trade_currency, trade_price, real_currency)
+                import_suishouji(entry)
                 ret.append(entry)
         return ret
 

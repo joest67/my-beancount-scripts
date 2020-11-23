@@ -1,3 +1,5 @@
+
+from urllib.parse import parse_qsl
 from datetime import date, datetime
 
 import click
@@ -11,6 +13,7 @@ from modules.imports.exc import BaseBizException
 Account_suishouji = 'Liabilities:CreditCard:SSJ'
 
 DETAIL_URL = 'https://www.sui.com/tally/new.rmi'
+ADD_ITEM_URL = 'https://www.sui.com/tally/payout.rmi'
 
 headers = {
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36",
@@ -43,7 +46,11 @@ def do_request(url, data, max_retries=5):
         resp = requests.post(url, data=data, headers=headers, cookies=chrome_cookies(url))
         status_code = resp.status_code
         if status_code / 100 == 2:
-            return resp.json()
+            if 'application/json' in resp.headers['Content-Type']:
+                return resp.json()
+            else:
+                print(resp.text)
+                return
         retry += 1
         print("retry %s times" % retry)
     raise BaseBizException("response status get %s" % status_code)
@@ -79,6 +86,17 @@ def fetch_records(date_start: date, date_end: date):
 
     return parse_records(*resp_list)
 
+
+a = """id=0&category=5372791554080&store=0&time=2020-11-24+00%3A43&project=0&member=0&memo=&url=&out_account=0&in_account=0&debt_account=&account=515609245049&price=1&price2="""
+account = "515609245049"
+category = "5372791554080"
+def import_record(time, price: str, description):
+    data = dict(parse_qsl(a))
+    data["time"] = time.strftime('%Y-%m-%d %H:%M:%S')
+    data['price'] = price
+    data['memo'] = "自动导入 " + description
+    print("do request data:", data)
+    do_request(ADD_ITEM_URL, data)
 
 """
 {'account': 515609245049, 'buyerAcount': '家庭信用开支', 'buyerAcountId': 515609245049, 'categoryIcon': 'd_com2.png',
