@@ -14,8 +14,10 @@ from beancount.core.number import ZERO
 from beancount.parser import printer
 from beancount.query import query
 
-from modules.imports import backup
+from modules.imports import backup, ACCOUNT_ABC, Account_CMB, ACCOUNT_CREDIT_CMB
 from modules.imports.colors import bcolors
+
+MAX_ERROR_AMOUNT = 5  # 5元
 
 
 class GlobalContext(object):
@@ -162,7 +164,9 @@ class PairGuess(object):
 class RecordStorage(object):
 
     info_account = ["Liabilities:CreditCard:SSJ"]
-    mm_account = ["Liabilities:CreditCard:CMB"]
+    mm_debit_account = [Account_CMB, ACCOUNT_ABC]
+    mm_credit_account = [ACCOUNT_CREDIT_CMB]
+    mm_account = mm_debit_account + mm_credit_account
 
     def __init__(self):
         self.entries = None
@@ -182,7 +186,7 @@ class RecordStorage(object):
 
     def init_data(self):
         self._info_records = self._query_records(self.start_date, self.end_date, self.info_account)
-        self._mm_records = self._query_records(self.start_date, self.end_date, self.mm_account)
+        self._mm_records = self._query_mm_records(self.start_date, self.end_date)
 
     def output_to_file(self, dest_filepath):
         backup_file = backup(dest_filepath)
@@ -203,12 +207,24 @@ class RecordStorage(object):
             ret[_date] = b
         return ret
 
+    def _query_mm_records(self, date_start, date_end) -> dict:
+        account_param = " or ".join(["account = '%s'" % account for account in self.mm_account])
+        mm_credit_account_param = " or ".join(["account = '%s'" % account for account in self.mm_credit_account])
+        query_params = (date_start, date_end, mm_credit_account_param, account_param)
+        bql = "SELECT id, date, narration, position, account, entry_meta('pair_key') as pair_key where" \
+              " date >= {} and date <= {} " \
+              " and ((number(cost(position)) >= 0 and ({})) or (number(cost(position)) < 0 and ({})))" \
+              "order by date desc"
+        _, items = query.run_query(self.entries, self.option_map, bql, *query_params)
+        return self.arrange_by_date(items)
+
     def _query_records(self, date_start, date_end, accounts) -> dict:
         account_param = " or ".join(["account = '%s'" % account for account in accounts])
-        query_params = (account_param, date_start, date_end)
+        query_params = (date_start, date_end, account_param)
         bql = "SELECT id, date, narration, position, account, entry_meta('pair_key') as pair_key where" \
-              " ({})" \
-              " and date >= {} and date <= {} order by date desc"
+              " date >= {} and date <= {} " \
+              " and ({})" \
+              "order by date desc"
         _, items = query.run_query(self.entries, self.option_map, bql, *query_params)
         return self.arrange_by_date(items)
 
@@ -312,7 +328,7 @@ class Printer(object):
 
 
 def process_cmp_result(compare_group):
-    colors = "" if compare_group.diff_amount() == 0 else bcolors.FAIL
+    colors = "" if abs(compare_group.diff_amount()) <= MAX_ERROR_AMOUNT else bcolors.FAIL
     Printer._print_with_color("信息流对比资金流差值：({}-{})={}"
                               .format(-compare_group.info.sum(), -compare_group.mm.sum(),
                                       -(compare_group.diff_amount())),

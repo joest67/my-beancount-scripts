@@ -1,7 +1,4 @@
-import calendar
-import csv
 from datetime import date
-from io import StringIO
 
 import dateparser
 import eml_parser
@@ -9,12 +6,10 @@ from beancount.core import data
 from beancount.core.data import Amount, Balance, Decimal, Posting, Transaction
 from bs4 import BeautifulSoup
 
-from . import (DictReaderStrip, get_account_by_guess,
-               get_income_account_by_guess)
-from .base import Base
+from . import (get_account_by_guess,
+               ACCOUNT_CREDIT_CMB)
 from .deduplicate import Deduplicate
 
-Account招商 = 'Liabilities:CreditCard:CMB'
 trade_area_list = {
     'CN': 'CNY',
     'US': 'USD',
@@ -72,7 +67,7 @@ class CMBCreditV2():
             d.select('#fixBand40 div font')[0].text.replace(
                 '￥', '').replace(',', '').strip()
         entry = Balance(
-            account=Account招商,
+            account=ACCOUNT_CREDIT_CMB,
             amount=Amount(Decimal(balance), 'CNY'),
             meta={},
             tolerance='',
@@ -121,8 +116,8 @@ class CMBCreditV2():
                                   None, real_amount, None, None)
                 entry.postings.append(posting)
 
-            data.create_simple_posting(entry, Account招商, None, None)
-            if not self.deduplicate.find_duplicate(entry, -amount, None, Account招商):
+            data.create_simple_posting(entry, ACCOUNT_CREDIT_CMB, None, None)
+            if not self.deduplicate.find_duplicate(entry, -amount, None, ACCOUNT_CREDIT_CMB):
                 transactions.append(entry)
 
         self.deduplicate.apply_beans()

@@ -2,9 +2,7 @@
 
 from datetime import datetime
 
-from modules.imports import BaseParser, CsvReader
-
-Account_CMB = 'Liabilities:DebitCard:CMB'
+from modules.imports import BaseParser, CsvReader, Account_CMB
 
 """
 交易日期,交易时间,收入,支出,余额,交易类型,交易备注
@@ -13,7 +11,8 @@ Account_CMB = 'Liabilities:DebitCard:CMB'
 
 
 def build_trade_time(line):
-    return datetime.strptime(line.get("交易日期") + ' ' + line.get("交易时间"), '%Y%m%d %H:%M:%S')
+    return datetime.strptime(line.get("交易日期"), '%Y%m%d').date()
+    # return datetime.strptime(line.get("交易日期") + ' ' + line.get("交易时间"), '%Y%m%d %H:%M:%S')
 
 
 class CMBDebit(BaseParser):
@@ -29,14 +28,17 @@ class CMBDebit(BaseParser):
         print('read %s rows' % csv_contents.size)
         for idx, line in enumerate(csv_contents):
             time = build_trade_time(line)
-            if len(line.get("收入")) > 0:
-                print("忽略收入")
-                continue
+            # if len(line.get("收入")) > 0:
+            #     print("忽略收入, %s" % line)
+            #     continue
 
             description = line.get("交易类型") + "_" + line.get("交易备注")
             payee = "CMB-Debit"
             trade_currency = real_currency = 'CNY'
-            trade_price = real_price = line.get("支出")
+            if len(line.get('支出')) > 0:
+                trade_price = real_price = line.get("支出")
+            else:
+                trade_price = real_price = '-' + line.get("收入")
             # trade_currency = change_currency(line[3].strip())
 
             print("{}: Importing {} at {}".format(idx + 1, description, time))

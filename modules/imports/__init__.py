@@ -15,6 +15,9 @@ from .deduplicate import Deduplicate
 from .exc import NotSuitableImporterException
 from ..accounts import *
 
+ACCOUNT_ABC = 'Liabilities:DebitCard:ABC'
+Account_CMB = 'Liabilities:DebitCard:CMB'
+ACCOUNT_CREDIT_CMB = 'Liabilities:CreditCard:CMB'
 
 class BaseParser(object):
 
