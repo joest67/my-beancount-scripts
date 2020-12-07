@@ -1,5 +1,6 @@
 import abc
 import csv
+from collections import defaultdict
 from datetime import date, datetime
 
 import eml_parser
@@ -90,7 +91,7 @@ def import_suishouji(entry: Transaction):
     from modules.imports.suishouji import import_record
     d = entry.date
     dt = datetime(year=d.year, month=d.month, day=d.day)
-    print(entry.postings[0].units.number)
+    # print(entry.postings[0].units.number)
     import_record(dt, str(entry.postings[0].units.number), entry.narration)
 
 
@@ -152,9 +153,9 @@ class EmlParser(BaseParser):
             full_descriptions = tds[start_pos + 3].text.strip().split('-')
             payee = full_descriptions[0]
             if len(full_descriptions) == 1:
-                description = full_descriptions[0]
+                description = full_descriptions[0] + '-' + tds[start_pos + 5].text.strip()
             else:
-                description = '-'.join(full_descriptions[1:])
+                description = '-'.join(full_descriptions[1:]) + '-' + tds[start_pos + 5].text.strip()
 
             trade_date = tds[start_pos + 1].text.strip()
             post_date = tds[start_pos + 2].text.strip()
@@ -176,11 +177,35 @@ class EmlParser(BaseParser):
 
             entry = self.create_entry(description, time, real_price, payee,
                                       trade_currency, trade_price, real_currency)
-            import_suishouji(entry)
+            # import_suishouji(entry)
             transactions.append(entry)
 
+        export_to_suishouji(transactions)
         return transactions
 
+
+def export_to_suishouji(transactions):
+    from .suishouji import fetch_records
+    dates = sorted([t.date for t in transactions])
+    records = fetch_records(dates[0], dates[-1])
+    money_group_by_date = defaultdict(list)
+    for r in records:
+        timestamp, money = r["date"]['time'], str(r["itemAmount"]).strip('0.')
+        created = datetime.fromtimestamp(timestamp / 1000)
+        created_str = created.strftime('%Y-%m-%d')
+        money_group_by_date[created_str].append(money)
+    for entry in transactions:
+        created_at = entry.date.strftime('%Y-%m-%d')
+        if created_at in money_group_by_date:
+            money = str(entry.postings[0].units.number).strip('0.')
+            if money in money_group_by_date[created_at]:
+                print("记录已经存在 %s, %s" % (entry.narration, money))
+            else:
+                # print(type(money_group_by_date[created_at][0]))
+                print("创建记录 %s, %s" % (entry.narration, money))
+                import_suishouji(entry)
+        else:
+            print("创建记录", entry.narration)
 
 class CsvParser(BaseParser):
 
@@ -206,20 +231,22 @@ class CsvParser(BaseParser):
                 full_descriptions = line[2].strip().split('-')
                 payee = full_descriptions[0]
                 if len(full_descriptions) == 1:
-                    description = full_descriptions[0]
+                    description = full_descriptions[0] + "-" + line[4].strip()
                 else:
-                    description = '-'.join(full_descriptions[1:])
+                    description = '-'.join(full_descriptions[1:]) + "-" + line[4].strip()
                 real_currency = 'CNY'
-                real_price = line[4].strip()\
+                real_price = line[5].strip()\
                     .replace('￥', '') \
                     .replace('$', '')
+                # print("===", line[4], line[5], real_price)
                 trade_price = line[6].strip()
                 trade_currency = change_currency(line[3].strip())
 
                 print("{}: Importing {} at {}".format(idx, description, time))
                 entry = self.create_entry(description, time, real_price, payee, trade_currency, trade_price, real_currency)
-                import_suishouji(entry)
+                # import_suishouji(entry)
                 ret.append(entry)
+        export_to_suishouji(ret)
         return ret
 
 
