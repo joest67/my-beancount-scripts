@@ -206,6 +206,7 @@ def export_to_suishouji(transactions):
                 import_suishouji(entry)
         else:
             print("创建记录", entry.narration)
+            import_suishouji(entry)
 
 class CsvParser(BaseParser):
 
